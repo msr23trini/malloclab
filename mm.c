@@ -108,7 +108,7 @@ int mm_init(void) {
   PUT(heap_listp + (1*WSIZE), PACK(DSIZE, 1)); /* Prologue header */
   PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1)); /* Prologue footer */
   PUT(heap_listp + (3*WSIZE), PACK(0, 1));     /* Epilogue header */
-  heap_listp += (4*WSIZE);
+  heap_listp += (2*WSIZE);
   /* $end mminit */
 
 #ifdef NEXT_FIT
@@ -132,11 +132,11 @@ void *malloc (size_t size) {
     size_t extendsize; /* Amount to extend heap if no fit */
     char *bp;
 
-/* $end mmmalloc */
+
     if (heap_listp == 0){
         mm_init();
     }
-/* $begin mmmalloc */
+
     /* Ignore spurious requests */
     if (size == 0)
         return NULL;
