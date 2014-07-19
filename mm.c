@@ -1,9 +1,7 @@
 /*
  * mm.c
  * Shastri Ram- shastrir
- *
- * NOTE TO STUDENTS: Replace this header comment with your own header
- * comment that gives a full description of your solution.
+.
  */
 
 #include <assert.h>
@@ -38,17 +36,9 @@ static void printblock(void *bp);
 static void checkblock(void *bp);
 static void *get_pred(void *bp);
 static void *get_succ(void *bp);
-static void swap(void *prev, void *next, void *bp);
-static void swap4( void *prev_block, void *next_block);
-static void make_new_first_block( void *next, void *prev);
-static void normal_swap(void *next, void *prev);
-static void clear_first(void *bp);
-static void new_first_block_2(void *next, void *prev);
-static void new_connection( void *prev, void *next);
-static void update_link_1(void *next, void *prev, void *bp) ;
-static void update_link_2(void *next, void *prev, void *bp);
+static void add_block (void *bp);
+static void remove_block (void *bp);
 
-/* $begin mallocmacros */
 /* Basic constants and macros */
 #define WSIZE       4       /* Word and header/footer size (bytes) */
 #define DSIZE       8       /* Doubleword size (bytes) */
@@ -79,12 +69,9 @@ static void update_link_2(void *next, void *prev, void *bp);
 #define PREV_BLKP(bp)  ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
 
 
-
-/* $end mallocmacros */
-
 /* Global variables */
 static char *heap_listp = 0;  /* Pointer to first block */
-static long *explicit_list = 0 ; //pointer to first free address
+static long *root = 0 ; //pointer to first free address
 #ifdef NEXT_FIT
 static long *rover;           /* Next fit rover */
 #endif
@@ -121,17 +108,13 @@ int mm_init(void) {
   PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1)); /* Prologue footer */
   PUT(heap_listp + (3*WSIZE), PACK(0, 1));     /* Epilogue header */
   heap_listp += (2*WSIZE);
-  /* $end mminit */
-
-
-  /* $begin mminit */
 
   /* Extend the empty heap with a free block of CHUNKSIZE bytes */
   if (extend_heap(CHUNKSIZE/WSIZE) == NULL)
     return -1;
 
 #ifdef NEXT_FIT
-    rover = explicit_list;
+    rover = root;
 #endif
 
     //mm_checkheap(1);
@@ -139,9 +122,6 @@ int mm_init(void) {
 }
 
 
-/*
- * malloc
- */
 void *malloc (size_t size) {
   //mm_checkheap(1);  // Let's make sure the heap is ok!
     size_t asize;      /* Adjusted block size */
@@ -181,68 +161,10 @@ void *malloc (size_t size) {
     return bp;
 }
 
-static void move_to_root(void *bp)
-{
-  REQUIRES (bp!=NULL);
-  REQUIRES ((size_t)(bp)%8 == 0);
-
-  void *succ = get_succ(bp);
-  void **pred = get_pred(bp);
-  if ( *pred  == NULL ) //already at the root
-    return;
-  *(long*)(succ)  = (long)(explicit_list);
-  void* next_pred  = get_pred(explicit_list);
-  *(long*)(next_pred) = (long)(bp);
-  explicit_list = bp;
-  *pred = NULL ;
-  return;
-}
 
 
-static void swap(void *prev, void *next, void *bp)
-{
-  REQUIRES (bp!=NULL);
-  REQUIRES ((size_t)(bp)%8 == 0);
+// coalesce - Boundary tag coalescing. Return ptr to coalesced block
 
-  REQUIRES (prev!=NULL);
-  REQUIRES ((size_t)(prev)%8 == 0);
-
-  REQUIRES (prev!=NULL);
-  REQUIRES ((size_t)(prev)%8 == 0);
-
-
-  if ( (prev == NULL) && (next !=  NULL) )
-    //first block in list. predecessor but no successor.
-    {
-      *(long*)(next) = *(long*)(prev);
-      void **prev_pt = (void*)(*(long*)(prev));
-      *prev_pt = NULL;
-      void *prev_pt_succ = get_succ(prev_pt);
-      *(long*)(prev_pt_succ) = (long)(explicit_list);
-      void *explicit_list_pred = get_pred(explicit_list);
-      *(long*)(explicit_list_pred)= (long)(prev_pt);
-      explicit_list = bp;
-      return;
-    }
-  else if  ( (prev!= NULL) && (next == NULL) )
-    //last block in list.remains last block in the list.
-    {
-      return;
-    }
-  else if  ((prev != NULL) && (next != NULL) )
-    {
-      void *succ = get_succ((void*)(*(long*)(prev)));
-      *(int*)(succ) = *(int*)(next);
-      void *pred = get_pred((void*)(*(long*)(next)));
-      *(int*)(pred) =*(int*)(prev);
-      return;
-    }
-}
-/* $end mmfree */
-/*
- * coalesce - Boundary tag coalescing. Return ptr to coalesced block
- */
-/* $begin mmfree */
 static void *coalesce(void *bp)
 {
   REQUIRES (bp!=NULL);
@@ -252,253 +174,46 @@ static void *coalesce(void *bp)
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
 
-    //both allocated
-    if (prev_alloc && next_alloc) {            /* Case 1 */
-      printf("case 1/n");
-      if ( explicit_list == 0)
-        {
-          REQUIRES (explicit_list == 0);
-          explicit_list = bp;
-          void **succ =  get_succ(bp);
-          void **pred =  get_pred(bp);
-          *succ = NULL;
-          *pred = NULL;
-        }
-      else
-        {
-          REQUIRES (explicit_list != 0);
-          move_to_root(bp);
-        }
+    //Case 1 - both allocated
+    if (prev_alloc && next_alloc) {
+      add_block(bp);
       return bp;
     }
 
-    //prev allocated but next block is free
-    else if (prev_alloc && !next_alloc) {      /* Case 3 */
-      printf("case 3/n");
+    //Case 3 - prev allocated but next block is free
+    else if (prev_alloc && !next_alloc) {
       size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
-        PUT(HDRP(bp), PACK(size, 0));
-        PUT(FTRP(bp), PACK(size,0));
-        swap(  get_pred(NEXT_BLKP(bp)), get_succ(NEXT_BLKP(bp)), bp );
-        move_to_root(bp);
-
-
+      PUT(HDRP(bp), PACK(size, 0));
+      PUT(FTRP(bp), PACK(size,0));
+      remove_block( (void*)( *(long*)( get_succ(bp) ) ) );
+      add_block(bp);
     }
 
-    //prev is free but  next is allocated
-    else if (!prev_alloc && next_alloc) {      /* Case 2 */
-      printf ("case 2/n");
+    //Case 2 - prev is free but  next is allocated
+    else if (!prev_alloc && next_alloc) {
       size += GET_SIZE(HDRP(PREV_BLKP(bp)));
-        PUT(FTRP(bp), PACK(size, 0));
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        bp = PREV_BLKP(bp);
-        swap(  get_pred(bp), get_succ(bp), bp );
+      PUT(FTRP(bp), PACK(size, 0));
+      PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
+      remove_block( (void*)( *(long*)( get_pred(bp) ) ) );
+      bp = PREV_BLKP(bp);
+      add_block(bp);
 
-        move_to_root(bp);
     }
 
-    //both prev and next are free
-    else {                                     /* Case 4 */
-      printf("case 4/n");
+    // Case 4 - both prev and next are free
+    else {
       size += GET_SIZE(HDRP(PREV_BLKP(bp))) +
-            GET_SIZE(FTRP(NEXT_BLKP(bp)));
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
-
-        swap4( PREV_BLKP(bp),NEXT_BLKP(bp) );
-        bp = PREV_BLKP(bp);
-         move_to_root(bp);
+        GET_SIZE(FTRP(NEXT_BLKP(bp)));
+      PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
+      PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
+      remove_block( (void*)( *(long*)( get_pred(bp) ) ) );
+      remove_block( (void*)( *(long*)( get_succ(bp) ) ) );
+      bp = PREV_BLKP(bp);
+      add_block(bp);
     }
     return bp;
 }
 
-static void swap4( void *prev_block, void *next_block)
-{
-
-  REQUIRES (prev_block!=NULL);
-  REQUIRES ((size_t)(prev_block)%8 == 0);
-
-  REQUIRES (next_block!=NULL);
-  REQUIRES ((size_t)(next_block)%8 == 0);
-
-  bool prev_is_last, prev_is_first, next_is_last, next_is_first,
-    next_is_normal, prev_is_normal = false;
-
-  void *prev_block_succ = get_succ(prev_block);
-  void *prev_block_pred = get_pred (prev_block);
-
-  void *next_block_succ = get_succ(next_block);
-  void *next_block_pred = get_pred(next_block);
-
-  if (prev_block_pred == NULL)
-    prev_is_last = true;
-  if (prev_block_succ == NULL)
-    prev_is_first = true;
-  if (next_block_pred == NULL)
-    next_is_last = true;
-  if (next_block_succ == NULL)
-    next_is_first = true;
-  if (next_block_succ != NULL && next_block_pred != NULL)
-    next_is_normal = true;
-  if (prev_block_succ != NULL && prev_block_pred != NULL)
-    prev_is_normal = true;
-
-  //previous block is the last block in the list and the next block
-  //is the first block in the list.
-  if (prev_is_last && next_is_first)
-    {
-      void *next_block_pred_pt = (void*)(*(long*)(next_block_pred));
-      void *prev_block_succ_pt = (void*)(*(long*)(prev_block_succ));
-      make_new_first_block( next_block_pred_pt, prev_block_succ_pt);
-      *(long*)(prev_block_succ) = (long)( next_block_pred_pt);
-      return;
-    }
-
-  //prev block is the last block in the list and the next block is
-  //somewhere within the list.
-  else if ( prev_is_last && next_is_normal)
-    {
-      normal_swap(next_block_succ, next_block_pred);
-      return;
-    }
-
-  //prev block is the first block and the next block is the last block
-  else if (prev_is_first && next_is_last)
-    {
-      explicit_list = prev_block;
-      void *prev_block_pred_pt = (void*)(*(long*)(prev_block_pred));
-      void *next_block_succ_pt = (void*)(*(long*)(next_block_succ));
-      new_first_block_2(next_block_succ_pt, prev_block_pred_pt);
-      return;
-    }
-
-  //prev block is first and next block is somewhere within the list
-  else if (prev_is_first && next_is_normal)
-    {
-      normal_swap(next_block_succ, next_block_pred);
-      clear_first(prev_block);
-      move_to_root(prev_block);
-      return;
-    }
-
-  //both prev and next are located within the list
-  else if (prev_is_normal && next_is_normal)
-    {
-      normal_swap(next_block_succ, next_block_pred);
-      normal_swap(prev_block_succ, prev_block_pred);
-      return;
-    }
-
-  //prev is within the list and next is the last block
-  else if (prev_is_normal && next_is_last)
-    {
-      explicit_list = prev_block;
-      void *explicit_list_pred = get_pred(explicit_list);
-      explicit_list_pred = NULL;
-      void *prev_block_pred_pt = (void*)(*(long*)(prev_block_pred));
-      void *next_block_succ_pt = (void*)(*(long*)(next_block_succ));
-      new_connection(prev_block_pred_pt, next_block_succ_pt);
-      return;
-    }
-
-  //prev is within the list and next is the first block
-  else if (prev_is_normal && next_is_first)
-    {
-      clear_first(next_block);
-      void *prev_block_succ_pt = (void*)(*(long*)(prev_block_succ));
-      void *prev_block_pred_pt = (void*)(*(long*)(prev_block_pred));
-      normal_swap(prev_block_succ_pt, prev_block_pred_pt);
-      move_to_root(prev_block);
-      return;
-    }
-}
-
-static void new_connection( void *prev, void *next)
-{
-  REQUIRES (prev!=NULL);
-  REQUIRES ((size_t)(prev)%8 == 0);
-
-  REQUIRES (next !=NULL);
-  REQUIRES ((size_t)(next)%8 == 0) ;
-
-  void *prev_succ = get_succ(prev);
-  *(long*)(prev_succ) = (long)(next);
-
-  void *next_pred = get_pred(next);
-  *(long*)(next_pred) = (long)(prev);
-  return;
-}
-
-static void clear_first(void *bp)
-{
-
-  REQUIRES (bp!=NULL);
-  REQUIRES ((size_t)(bp)%8 == 0);
-
-  void **succ = get_succ(bp);
-  *succ = NULL;
-  return;
-}
-
-static void new_first_block_2(void *next, void *prev)
-{
-
-  REQUIRES (prev!=NULL);
-  REQUIRES ((size_t)(prev)%8 == 0);
-
-  REQUIRES (next !=NULL);
-  REQUIRES ((size_t)(next)%8 == 0);
-
-  void *next_pred = get_pred(next);
-  *(long*)(next_pred) = (long)(explicit_list);
-
-  void *explicit_list_succ = get_succ(explicit_list);
-  *(long*)(explicit_list_succ) = (long)(next);
-
-  clear_first(prev);
-
-  return;
-}
-
-
-static void normal_swap(void *next, void *prev)
-{
-
-  REQUIRES (prev!=NULL);
-  REQUIRES ((size_t)(prev)%8 == 0);
-
-  REQUIRES (next !=NULL);
-  REQUIRES ((size_t)(next)%8 == 0);
-
-  void *succ = get_succ((void*)(*(long*)(prev)));
-  *(int*)(succ) = *(int*)(next);
-  void *pred = get_pred( (void*)(*(long*)(next)) );
-  *(int*)(pred) =*(int*)(prev);
-  return;
-}
-
-static void make_new_first_block( void *next, void *prev)
-{
-  REQUIRES (prev!=NULL);
-  REQUIRES ((size_t)(prev)%8 == 0);
-
-  REQUIRES (next !=NULL);
-  REQUIRES ((size_t)(next)%8 == 0);
-
-  void **next_succ = get_succ(next);
-  *next_succ = NULL;
-
-  void *next_pred = get_pred(next);
-  *(long*)(next_pred) = (long)(prev);
-
-  void *prev_pred = get_pred(prev);
-  *(long*)(prev_pred) = (long)(next);
-
-  return;
-}
-
-/*
- * free
- */
 void free (void *ptr) {
 
   REQUIRES (ptr!=NULL);
@@ -572,9 +287,8 @@ void *calloc (size_t nmemb, size_t size) {
   return newptr;
 }
 
-/*
- * extend_heap - Extend heap with free block and return its block pointer
- */
+// extend_heap - Extend heap with free block and return its block pointer
+
 static void *get_succ(void *bp)
 {
 
@@ -614,13 +328,10 @@ static void *extend_heap(size_t words)
 
 /*
  * place - Place block of asize bytes at start of free block bp
- *         and split if remainder would be at least minimum block size
- */
-/* $begin mmplace */
-/* $begin mmplace-proto */
+ and split if remainder would be at least minimum block size */
+
 
 static void place(void *bp, size_t asize)
-     /* $end mmplace-proto */
 {
 
   REQUIRES (bp!=NULL);
@@ -631,138 +342,20 @@ static void place(void *bp, size_t asize)
     if ((csize - asize) >= (3*DSIZE)) {
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
-        update_link_2(get_succ(bp), get_pred(bp), bp);
+        remove_block(bp);
         bp = NEXT_BLKP(bp);
         PUT(HDRP(bp), PACK(csize-asize, 0));
         PUT(FTRP(bp), PACK(csize-asize, 0));
+        add_block(bp);
     }
     else {
         PUT(HDRP(bp), PACK(csize, 1));
         PUT(FTRP(bp), PACK(csize, 1));
-        update_link_1(get_succ(bp), get_pred(bp), bp);
+        remove_block(bp);
     }
 
 }
 
-static void update_link_1(void *next, void *prev, void *bp)
-{
-  bool last_byte;
-  if ( NEXT_BLKP(bp) == mem_heap_hi() )
-    last_byte = true; //block has last byte
-  if ( next == NULL && prev == NULL)
-    //block was the only block in the explicit list
-    {
-      if (last_byte)
-        {
-          explicit_list = 0;
-          return;
-        }
-      else
-        {
-          bp = NEXT_BLKP(bp);
-          void **succ = get_succ(bp);
-          void **pred = get_pred(bp);
-          *succ = NULL;
-          *pred = NULL;
-          explicit_list = bp;
-          return;
-        }
-    }
-  else if (next == NULL && prev != NULL)
-    //allocated block is the first block in the explicit list
-    {
-      void *prev_bp = (void*)(*(long*)(prev));
-      void **succ = get_succ(prev_bp);
-      *succ = NULL;
-      return;
-    }
-  else if (next != NULL && prev == NULL)
-    //allocated block is the last block in the explicit list
-    {
-      void *next_pt = (void*)(*(long*)(next));
-      void **pred = get_pred(next_pt);
-      *pred = NULL;
-      explicit_list = next_pt;
-      return;
-    }
-  else if (next != NULL && prev !=NULL)
-    //allocate block lies somewhere within the explicit list
-    {
-      normal_swap((void*)(*(long*)(next)), (void*)(*(long*)(prev)));
-      return;
-    }
-}
-
-static void update_link_2(void *next, void *prev, void *bp)
-{
-  bool last_byte;
-  if (NEXT_BLKP(bp) == mem_heap_hi() )
-     last_byte = true; //block has last byte
-  if ( next == NULL && prev == NULL)
-    //block was the only block in the explicit list
-    {
-      if (last_byte)
-        {
-          explicit_list = 0;
-          return;
-        }
-      else
-        {
-          bp = NEXT_BLKP(bp);
-          void **succ = get_succ(bp);
-          void **pred = get_pred(bp);
-          *succ = NULL;
-          *pred = NULL;
-          explicit_list = bp;
-          return;
-        }
-    }
-  else if (next == NULL && prev != NULL)
-    //allocated block is the first block in the explicit list
-    {
-      void *new_block = NEXT_BLKP(bp);
-      void **new_block_succ = get_succ(new_block);
-      void *new_block_pred = get_pred(new_block);
-      *new_block_succ = NULL;
-      void* prev_block = (void*)(*(long*)(prev));
-      *(long*)new_block_pred = (long)(prev_block);
-      void *prev_block_succ = get_succ(prev_block);
-      *(long*)(prev_block_succ) = (long)(new_block);
-      return;
-    }
-  else if (next != NULL && prev == NULL)
-    //allocated block is the last block in the explicit list
-    {
-      void *new_block = NEXT_BLKP(bp);
-      void *new_block_succ = get_succ(new_block);
-      void **new_block_pred = get_pred(new_block);
-      *new_block_pred = NULL;
-      void* next_block = (void*)(*(long*)(next));
-      void *next_block_pred = get_pred(next_block);
-      *(long*)(next_block_pred) = (long)(new_block);
-      *(long*)(new_block_succ) = (long)(next_block);
-      explicit_list = new_block;
-      return;
-    }
-  else if (next != NULL && prev != NULL)
-    {
-      void *new_block = NEXT_BLKP(bp);
-      void *new_block_succ = get_succ(new_block);
-      void *new_block_pred = get_pred(new_block);
-      void *next_pt = (void*)(*(long*)(next));
-      void *prev_pt = (void*)(*(long*)(prev));
-      *(long*)(new_block_succ) = (long)(next_pt);
-      *(long*)(new_block_pred) = (long)(prev_pt);
-
-      void *next_pt_pred = get_pred(next_pt);
-      *(long*)(next_pt_pred) = (long)(new_block);
-
-      void *prev_pt_succ = get_succ(prev_pt);
-      *(long*)(prev_pt_succ) = (long)(new_block);
-
-      return;
-    }
-}
 
 
 static void *find_fit(size_t asize)
@@ -780,18 +373,18 @@ static void *find_fit(size_t asize)
             return rover;
 
     // search from start of list to old rover
-    for (rover = explicit_list; rover < oldrover;
+    for (rover = root; rover < oldrover;
          rover =(void*)(*(long*)(get_succ(rover))) )
         if (!GET_ALLOC(HDRP(rover)) && (asize <= GET_SIZE(HDRP(rover))))
             return rover;
 
     return NULL;  // no fit found
 #else*/
-/* $begin mmfirstfit */
+
     /* First fit search */
     void *bp;
 
-    for (bp = explicit_list; bp != NULL ;
+    for (bp = root; bp != NULL ;
          bp = (void*)(*(long*)(get_succ(bp))))
         {
           printf("in first fit search \n");
@@ -827,8 +420,6 @@ static void printblock(void *bp)
         printf("%p: EOL\n", bp);
         return;
     }
-
-
 }
 
 static void checkblock(void *bp)
@@ -853,7 +444,7 @@ int mm_checkheap(int verbose) {
   checkblock(heap_listp);
 
   long *list;
-  for (list = explicit_list; list != NULL;
+  for (list = root; list != NULL;
        list = (void*)(*(long*)( get_succ(list) )) ) {
     printf("here\n");
     if (verbose)
@@ -882,4 +473,72 @@ int mm_checkheap(int verbose) {
           printf ("not allocated properly\n");
      }
     return 0;
+}
+
+/*** explicit list manipulation functions ***/
+
+static void add_block(void *bp)
+{
+  REQUIRES (*(long*)bp != 0) ;
+  REQUIRES ((size_t)(bp) % 8 == 0);
+  if (root == 0)
+    {
+      root = bp;
+      long *succ = get_succ(bp);
+      long *pred = get_pred(bp);
+      *succ = 0;
+      *pred = 0;
+    }
+  else
+    {
+      long *succ = (long*)get_succ(bp);
+      long *pred = (long*)get_pred(bp);
+      *(pred) = 0;
+      *(succ) = (long)(root);
+      long *root_pred = (long*)get_pred(root);
+      *(root_pred) = (long)(bp);
+      root = bp;
+    }
+  return;
+}
+
+static void remove_block(void *bp)
+{
+  REQUIRES ( *(long*)(bp) != 0);
+  REQUIRES ( (size_t)(bp) % 8 == 0);
+
+  long *pred = (long*)get_pred(bp);
+  long *succ = (long*)get_succ(bp);
+
+  if ( *pred == 0 && *succ != 0)
+    //block to be removedd is the first block in the list
+    {
+      long *new_block_pred = (long*)get_pred( (void*)(succ) );
+      *new_block_pred = 0;
+      root = succ;
+      return;
+    }
+  else if (*pred != 0 && *succ == 0)
+    //block to be removed is the last block in the list
+    {
+      long *new_block_succ = (long*)get_succ( (void*)(pred) );
+      *new_block_succ = 0;
+      return;
+    }
+  else if (*pred != 0 && *succ != 0)
+    //block to bre removed is located somewhere within the list.
+    {
+      long *before_block_succ = (long*) get_succ( (void*)(*pred) );
+      *before_block_succ = *succ;
+
+      long *after_block_pred = (long*) get_pred( (void*)(*succ) );
+      *after_block_pred = *pred;
+
+      return;
+    }
+
+  else if ( *pred == 0 && *succ == 0)
+    {
+      root = 0;
+    }
 }
