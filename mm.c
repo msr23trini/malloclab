@@ -118,7 +118,7 @@ int mm_init(void) {
 #endif
 
     //mm_checkheap(1);
-  return 0;
+    return 0;
 }
 
 
@@ -128,7 +128,7 @@ void *malloc (size_t size) {
     size_t extendsize; /* Amount to extend heap if no fit */
     char *bp;
 
-    printf ("malloc %d\n" ,(int)size);
+    //printf ("malloc %d\n" ,(int)size);
     if (heap_listp == 0){
         mm_init();
     }
@@ -142,7 +142,7 @@ void *malloc (size_t size) {
         asize = 3*DSIZE;
     else
         asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE);
-    printf ("Aszie %d\n", (int)(asize));
+    //printf ("Aszie %d\n", (int)(asize));
     /* Search the free list for a fit */
     if ((bp = find_fit(asize)) != NULL) {
       place(bp, asize);
@@ -244,7 +244,7 @@ void *realloc(void *oldptr, size_t size) {
   REQUIRES (oldptr!=NULL);
   REQUIRES ((size_t)(oldptr)%8 == 0);
 
-  printf ("realloc %d\n",(int)size);
+  //printf ("realloc %d\n",(int)size);
     size_t oldsize;
     void *newptr;
 
@@ -282,7 +282,7 @@ void *realloc(void *oldptr, size_t size) {
 void *calloc (size_t nmemb, size_t size) {
   size_t bytes = nmemb * size;
   void *newptr;
-  printf ("calloc %d\n" ,(int)size);
+  //printf ("calloc %d\n" ,(int)size);
   newptr = malloc(bytes);
   memset(newptr, 0, bytes);
   ENSURES ( (size_t)(newptr)%8 == 0);
@@ -488,18 +488,18 @@ static void add_block(void *bp)
   if (root == 0)
     {
       root = bp;
-      void **succ = get_succ(bp);
-      void **pred = get_pred(bp);
-      *succ = NULL;
-      *pred = NULL;
+      void *succ = get_succ(bp);
+      void *pred = get_pred(bp);
+      *(long*)succ = 0;
+      *(long*)pred = 0;
     }
   else
     {
-      long *succ = (long*)get_succ(bp);
-      void **pred = get_pred(bp);
-      *(pred) = NULL;
+      long *succ = (long*)( get_succ(bp));
+      void *pred = get_pred(bp);
+      *(long*)(pred) = 0;
       *(succ) = (long)(root);
-      long *root_pred = (long*)get_pred(root);
+      long *root_pred = (long*)(get_pred(root));
       *(root_pred) = (long)(bp);
       root = bp;
     }
@@ -517,25 +517,25 @@ static void remove_block(void *bp)
   if ( *(long*)pred == 0 && *(long*)succ != 0)
     //block to be removed is the first block in the list
     {
-      void **new_block_pred =  get_pred( (void*)(*(long*)succ) );
-      *new_block_pred = NULL;
-      root = succ;
+      void *new_block_pred =  get_pred( (void*)(*(long*)succ) );
+      *(long*)new_block_pred = 0;
+      root = (void*)(*(long*)(succ));
       return;
     }
   else if (*(long*)pred != 0 && *(long*)succ == 0)
     //block to be removed is the last block in the list
     {
-      void **new_block_succ = get_succ( (void*)(*(long*)pred) );
-      *new_block_succ = NULL;
+      void *new_block_succ = get_succ( (void*)(*(long*)pred) );
+      *(long*)new_block_succ = 0;
       return;
     }
   else if (*(long*)pred != 0 && *(long*)succ != 0)
     //block to bre removed is located somewhere within the list.
     {
-      long *before_block_succ = (long*) get_succ((void*)(*(long*)pred));
+      long *before_block_succ = (long*)( get_succ((void*)(*(long*)pred)));
       *before_block_succ = *(long*)succ;
 
-      long *after_block_pred = (long*) get_pred((void*)(*(long*)succ));
+      long *after_block_pred = (long*) (get_pred((void*)(*(long*)succ)));
       *after_block_pred = *(long*)pred;
 
       return;
