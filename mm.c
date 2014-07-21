@@ -101,6 +101,7 @@ static long *rover;           /* Next fit rover */
  */
 int mm_init(void) {
   /* Create the initial empty heap */
+  printf("in mm_init \n");
   if ((heap_listp = mem_sbrk(4*WSIZE)) == (void *)-1)
     return -1;
   PUT(heap_listp, 0);                          /* Alignment padding */
@@ -138,8 +139,8 @@ void *malloc (size_t size) {
         return NULL;
 
     /* Adjust block size to include overhead and alignment reqs. */
-    if (size <= 2*DSIZE)
-        asize = 3*DSIZE;
+    if (size <= 3*DSIZE)
+        asize = 4*DSIZE;
     else
         asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE);
 
@@ -169,6 +170,7 @@ void *malloc (size_t size) {
 
 static void *coalesce(void *bp)
 {
+  printf ("in coalesce\n");
   REQUIRES (bp!=NULL);
   REQUIRES ((size_t)(bp)%8 == 0);
   //mm_checkheap(1);
@@ -178,12 +180,15 @@ static void *coalesce(void *bp)
     //printf("coalescing");
     //Case 1 - both allocated
     if (prev_alloc && next_alloc) {
+      printf ("case 1 \n ") ;
       add_block(bp);
-      return bp;
+
     }
 
     //Case 3 - prev allocated but next block is free
     else if (prev_alloc && !next_alloc) {
+      printf ("case 3 \n");
+
       remove_block( NEXT_BLKP(bp) );
       size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
       PUT(HDRP(bp), PACK(size, 0));
@@ -193,6 +198,10 @@ static void *coalesce(void *bp)
 
     //Case 2 - prev is free but  next is allocated
     else if (!prev_alloc && next_alloc) {
+      printf ("case 2 \n");
+      printf ( "case 2 bp %p \n",bp);
+      printf (" prev bp %p %d \n", PREV_BLKP(bp), GET_SIZE((HDRP(PREV_BLKP(bp)))));
+
       remove_block( PREV_BLKP(bp) );
       size += GET_SIZE(HDRP(PREV_BLKP(bp)));
       PUT(FTRP(bp), PACK(size, 0));
@@ -200,10 +209,19 @@ static void *coalesce(void *bp)
       bp = PREV_BLKP(bp);
       add_block(bp);
 
+       printf (" root %p \n", (void*)root);
+       printf (" bp %p \n", bp);
+       //void *next_node = (void*)(*(long*)get_succ((void*)root));
+       //void *next_next_node =  (void*)(*(long*)get_succ(next_node));
+
+       //printf (" next node %p \n", next_node );
+       //printf (" next next node %p \n", next_next_node );
+
     }
 
     // Case 4 - both prev and next are free
     else {
+      printf ("case 4 \n");
       remove_block( PREV_BLKP(bp) );
       remove_block( NEXT_BLKP(bp) );
       size += GET_SIZE(HDRP(PREV_BLKP(bp))) +
@@ -215,11 +233,12 @@ static void *coalesce(void *bp)
       add_block(bp);
     }
     ENSURES ( (size_t)(bp)%8 == 0);
+    printf ("returning from coalesce\n");
     return bp;
 }
 
 void free (void *ptr) {
-
+  printf("in free\n");
   REQUIRES (ptr!=NULL);
   REQUIRES ((size_t)(ptr)%8 == 0);
 
@@ -238,6 +257,7 @@ void free (void *ptr) {
     PUT(HDRP(ptr), PACK(size, 0));
     PUT(FTRP(ptr), PACK(size, 0));
     coalesce(ptr);
+    printf("reuturning from free\n");
 }
 
 
@@ -295,10 +315,16 @@ void *calloc (size_t nmemb, size_t size) {
 
 static void *get_succ(void *bp)
 {
+  //printf ("root %p \n",(void*)root);
   //printf ("getting successor of %p\n",bp);
-  REQUIRES (bp!=NULL);
+  REQUIRES (bp != NULL);
   REQUIRES ((size_t)(bp)%8 == 0);
-  return bp;
+
+  bp = (void*)(*(long*)bp);
+  if (bp == NULL)
+    return NULL;
+  else
+    return bp;
 }
 
 static void *get_pred(void *bp)
@@ -307,8 +333,14 @@ static void *get_pred(void *bp)
   REQUIRES ((size_t)(bp)%8 == 0);
 
   bp = (void*)((char*)(bp) + DSIZE);
+  bp = (void*)(*(long*)(bp));
+
   ENSURES ( (size_t)(bp)%8 == 0);
-  return bp;
+
+  if (bp == NULL)
+    return NULL;
+  else
+    return bp;
 }
 
 static void *extend_heap(size_t words)
@@ -344,8 +376,8 @@ static void place(void *bp, size_t asize)
 
     size_t csize = GET_SIZE(HDRP(bp));
 
-    if ((csize - asize) >= (3*DSIZE)) {
-      printf(" needs to split block\n");
+    if ((csize - asize) >= (4*DSIZE)) {
+      printf("needs to split block\n");
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
 
@@ -387,7 +419,7 @@ static void *find_fit(size_t asize)
 
     // search from start of list to old rover
     for (rover = root; rover < oldrover;
-         rover =(void*)(*(long*)(get_succ(rover))) )
+        rover =(void*)(*(long*)(get_succ(rover))) )
         if (!GET_ALLOC(HDRP(rover)) && (asize <= GET_SIZE(HDRP(rover))))
             return rover;
 
@@ -405,7 +437,7 @@ static void *find_fit(size_t asize)
     for (bp = (long)root; bp != 0;
          bp = (*(long*)( get_succ( (void*)(bp) )) ) )
         {
-          //printf("in first fit search \n");
+          //printf("in first fit search np = %p \n",(void*)bp);
           REQUIRES ((void*)bp != NULL);
           REQUIRES (((size_t)(bp))%8 == 0);
           if (!GET_ALLOC( HDRP( (void*)(bp) ) ) &&
@@ -507,7 +539,8 @@ static void add_block(void *bp)
 
   if (root == 0)
     {
-      root = bp;
+      printf("initializing the root node \n");
+      root = (long*)bp;
       void *succ = get_succ(bp);
       void *pred = get_pred(bp);
       *(long*)succ = 0;
@@ -515,7 +548,9 @@ static void add_block(void *bp)
     }
   else
     {
+      printf ("adding to the beginning of the list \n");
       long *succ = (long*)( get_succ(bp));
+      printf ("check 1 succ = %p\n", (void*)(succ));
       void *pred = get_pred(bp);
       *(long*)(pred) = 0;
       *(succ) = (long)(root);
@@ -535,30 +570,39 @@ static void remove_block(void *bp)
 
   void *pred = get_pred(bp);
   void *succ = get_succ(bp);
-
+  printf ("bp = %p \n ", bp);
+  printf (" First block succ = %p \n", succ);
   if ( *(long*)pred == 0 && *(long*)succ != 0)
     //block to be removed is the first block in the list
     {
+
       void *new_block_pred =  get_pred( (void*)(*(long*)succ) );
       *(long*)new_block_pred = 0;
-      root = (long*)(*(long*)(succ));
+      root = (void*)(*(long*)(succ));
+      *(long*)(succ) = 0;
       return;
     }
+  //printf (" Last block succ = %p \n", succ);
   else if (*(long*)pred != 0 && *(long*)succ == 0)
     //block to be removed is the last block in the list
     {
       void *new_block_succ = get_succ( (void*)(*(long*)pred) );
       *(long*)new_block_succ = 0;
+      *(long*)(pred) = 0;
       return;
     }
+  // printf (" middle block succ = %p \n", succ);
   else if (*(long*)pred != 0 && *(long*)succ != 0)
     //block to be removed is located somewhere within the list.
     {
       long *before_block_succ = (long*)( get_succ((void*)(*(long*)pred)));
+      printf ("succ = %p \n ", succ);
       *before_block_succ = *(long*)succ;
 
       long *after_block_pred = (long*) (get_pred((void*)(*(long*)succ)));
       *after_block_pred = *(long*)pred;
+      *(long*)(pred) = 0;
+      *(long*)(succ) = 0;
 
       return;
     }
