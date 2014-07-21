@@ -12,7 +12,7 @@
 #include <unistd.h>
 #include "contracts.h"
 #include <stdbool.h>
-
+#include <limits.h>
 #include "mm.h"
 #include "memlib.h"
 
@@ -40,10 +40,12 @@ static void add_block (void *bp);
 static void remove_block (void *bp);
 static void print_list();
 
+static void *first_best_fit (void *bp, size_t asize, size_t diff);
+
 /* Basic constants and macros */
 #define WSIZE       4       /* Word and header/footer size (bytes) */
 #define DSIZE       8       /* Doubleword size (bytes) */
-#define CHUNKSIZE  (320)  /* Extend heap by this amount (bytes) */
+#define CHUNKSIZE  (312)  /* Extend heap by this amount (bytes) */
 
 #define MAX(x, y) ((x) > (y)? (x) : (y))
 
@@ -410,32 +412,34 @@ static void place(void *bp, size_t asize)
     //printf ("returning from place \n");
 }
 
+static void *first_best_fit (void *bp, size_t asize, size_t diff)
+{
+
+
+  for (size_t i = 0; i < 3;i++)
+    {
+      void *next_bp = get_succ(bp);
+      if (next_bp == NULL)
+        break;
+
+      size_t size =  GET_SIZE(HDRP((void*)(next_bp)));
+      int alloc = GET_ALLOC( HDRP( (void*)(next_bp) ));
+      if ( (asize <= size) &&  !alloc
+           && (size - asize) < diff)
+        {
+          ENSURES ( (size_t)(bp)%8 == 0);
+          bp = next_bp;
+          diff = size - asize;
+        }
+    }
+  return bp;
+}
 
 
 static void *find_fit(size_t asize)
 
 {
-
-/*#ifdef NEXT_FIT
-    // Next fit search
-    char *oldrover = rover;
-
-    // Search from the rover to the end of list
-    for ( ; rover != NULL ;
-          rover = (void*)(*(long*)(get_succ(rover))))
-        if (!GET_ALLOC(HDRP(rover)) && (asize <= GET_SIZE(HDRP(rover))))
-            return rover;
-
-    // search from start of list to old rover
-    for (rover = root; rover < oldrover;
-        rover =(void*)(*(long*)(get_succ(rover))) )
-        if (!GET_ALLOC(HDRP(rover)) && (asize <= GET_SIZE(HDRP(rover))))
-            return rover;
-
-    return NULL;  // no fit found
-#else*/
-
-    /* First fit search */
+   /* First fit search */
   void* bp;
 
   //printf("in find fit\n");
@@ -450,19 +454,18 @@ static void *find_fit(size_t asize)
           //printf("in first fit search np = %p \n",(void*)bp);
           REQUIRES ((void*)bp != NULL);
           REQUIRES (((size_t)(bp))%8 == 0);
-          //old_bp = bp;
+          size_t size =  GET_SIZE(HDRP((void*)(bp)));
           if (!GET_ALLOC( HDRP( (void*)(bp) ) ) &&
-              (asize <= GET_SIZE(HDRP((void*)(bp)))))
+              (asize <= size))
             {
-              // printf("got bp %p \n",(void*)(bp));
+
               ENSURES ( (size_t)(bp)%8 == 0);
-              //printf ("find fit return bp %p\n",(void*)bp);
-              return (void*)bp;
+              size_t diff = size - asize;
+              return first_best_fit((void*)bp,asize, diff) ;
             }
     }
     return NULL; /* No fit */
-/* $end mmfirstfit */
-//#endif
+
 }
 
 static void printblock(void *bp)
