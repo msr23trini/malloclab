@@ -36,9 +36,10 @@ static void printblock(void *bp);
 static void checkblock(void *bp);
 static void *get_pred(void *bp);
 static void *get_succ(void *bp);
-static void add_block (void *bp);
-static void remove_block (void *bp);
+static void add_block (void *bp, size_t size);
+static void remove_block (void *bp, size_t size);
 static void print_list();
+static int get_offset(size_t size);
 
 static void *first_best_fit (void *bp, size_t asize, size_t diff);
 
@@ -75,6 +76,8 @@ static void *first_best_fit (void *bp, size_t asize, size_t diff);
 
 #define SET_PRED(bp) ( * ((long*)bp +1 ))
 
+#define GET_BUCKET(bp, i ) ( (void*)( (long*)bp + i) )
+
 /* Global variables */
  char *heap_listp = 0;  /* Pointer to first block */
  void *root ; //pointer to first free address
@@ -105,18 +108,28 @@ static void *first_best_fit (void *bp, size_t asize, size_t diff);
 /*
  * Initialize: return -1 on error, 0 on success.
  */
+
+static void initialize_buckets(void *root)
+{
+  for (int i = 0; i < 9; i++)
+    {
+      SET_SUCC( ((long*)(root) + i) ) = 0;
+    }
+  return;
+}
+
 int mm_init(void) {
   /* Create the initial empty heap */
   //printf("in mm_init \n");
-  if ((heap_listp = mem_sbrk(6*WSIZE)) == (void *)-1)
+  if ((heap_listp = mem_sbrk(22*WSIZE)) == (void *)-1)
     return -1;
   root = (void*)heap_listp;
-  SET_SUCC(root) = 0;
-  PUT(heap_listp + (2*WSIZE), 0);              /* Alignment padding */
-  PUT(heap_listp + (3*WSIZE), PACK(DSIZE, 1)); /* Prologue header */
-  PUT(heap_listp + (4*WSIZE), PACK(DSIZE, 1)); /* Prologue footer */
-  PUT(heap_listp + (5*WSIZE), PACK(0, 1));     /* Epilogue header */
-  heap_listp += (4*WSIZE);
+  initialize_buckets(root);
+  PUT(heap_listp + (18*WSIZE), 0);              /* Alignment padding */
+  PUT(heap_listp + (19*WSIZE), PACK(DSIZE, 1)); /* Prologue header */
+  PUT(heap_listp + (20*WSIZE), PACK(DSIZE, 1)); /* Prologue footer */
+  PUT(heap_listp + (21*WSIZE), PACK(0, 1));     /* Epilogue header */
+  heap_listp += (20*WSIZE);
 
   /* Extend the empty heap with a free block of CHUNKSIZE bytes */
   if (extend_heap(CHUNKSIZE/WSIZE) == NULL)
@@ -188,9 +201,14 @@ static void *coalesce(void *bp)
     size_t size = GET_SIZE(HDRP(bp));
     //printf("coalescing");
     //Case 1 - both allocated
+    if (size < 16)
+      {
+        add_block(bp,size);
+        return bp;
+      }
     if (prev_alloc && next_alloc) {
       //printf ("case 1 \n ") ;
-      add_block(bp);
+      add_block(bp, size);
 
     }
 
@@ -198,11 +216,11 @@ static void *coalesce(void *bp)
     else if (prev_alloc && !next_alloc) {
       // printf ("case 3 \n");
 
-      remove_block( NEXT_BLKP(bp) );
+      remove_block( NEXT_BLKP(bp),GET_SIZE(HDRP(NEXT_BLKP(bp)))  );
       size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
       PUT(HDRP(bp), PACK(size, 0));
       PUT(FTRP(bp), PACK(size,0));
-      add_block(bp);
+      add_block(bp, size);
     }
 
     //Case 2 - prev is free but  next is allocated
@@ -211,12 +229,12 @@ static void *coalesce(void *bp)
       //printf ( "case 2 bp %p \n",bp);
       //printf (" prev bp %p %d \n", PREV_BLKP(bp), GET_SIZE((HDRP(PREV_BLKP(bp)))));
 
-      remove_block( PREV_BLKP(bp) );
+      remove_block( PREV_BLKP(bp), GET_SIZE(HDRP(PREV_BLKP(bp)))  );
       size += GET_SIZE(HDRP(PREV_BLKP(bp)));
       PUT(FTRP(bp), PACK(size, 0));
       PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
       bp = PREV_BLKP(bp);
-      add_block(bp);
+      add_block(bp, size);
 
       //printf (" root %p \n", (void*)root);
        //printf (" bp %p \n", bp);
@@ -231,15 +249,15 @@ static void *coalesce(void *bp)
     // Case 4 - both prev and next are free
     else {
       //printf ("case 4 \n");
-      remove_block( PREV_BLKP(bp) );
-      remove_block( NEXT_BLKP(bp) );
+      remove_block( PREV_BLKP(bp),GET_SIZE(HDRP(PREV_BLKP(bp))) );
+      remove_block( NEXT_BLKP(bp),  GET_SIZE(FTRP(NEXT_BLKP(bp))) );
       size += GET_SIZE(HDRP(PREV_BLKP(bp))) +
         GET_SIZE(FTRP(NEXT_BLKP(bp)));
       PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
       PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
 
       bp = PREV_BLKP(bp);
-      add_block(bp);
+      add_block(bp, size);
     }
     ENSURES ( (size_t)(bp)%8 == 0);
     //printf ("returning from coalesce\n");
@@ -389,7 +407,7 @@ static void place(void *bp, size_t asize)
 
     if ((csize - asize) >= (3*DSIZE)) {
       //printf("needs to split block\n");
-      remove_block (bp);
+      remove_block (bp, csize);
       PUT(HDRP(bp), PACK(asize, 1));
       PUT(FTRP(bp), PACK(asize, 1));
 
@@ -400,14 +418,14 @@ static void place(void *bp, size_t asize)
       //printf ("added header\n");
       PUT(FTRP(bp), PACK(csize-asize, 0));
       //printf ("added footer \n");
-      add_block(bp);
+      add_block(bp,csize-asize);
 
     }
     else {
       //printf("no need to split block\n");
         PUT(HDRP(bp), PACK(csize, 1));
         PUT(FTRP(bp), PACK(csize, 1));
-        remove_block(bp);
+        remove_block(bp,csize);
     }
     //printf ("returning from place \n");
 }
@@ -432,6 +450,7 @@ static void *first_best_fit (void *bp, size_t asize, size_t diff)
           diff = size - asize;
         }
     }
+
   return bp;
 }
 
@@ -448,22 +467,26 @@ static void *find_fit(size_t asize)
     //printf ("root successor %p\n", (void*)(*root));
     //printf ("next %p", get_succ(root));
     print_list();
-    for (bp =(void*)( *(long*)root); bp != NULL ;
-         bp = get_succ((void*)bp) )
-        {
-          //printf("in first fit search np = %p \n",(void*)bp);
-          REQUIRES ((void*)bp != NULL);
-          REQUIRES (((size_t)(bp))%8 == 0);
-          size_t size =  GET_SIZE(HDRP((void*)(bp)));
-          if (!GET_ALLOC( HDRP( (void*)(bp) ) ) &&
-              (asize <= size))
-            {
+    int offset = get_offset(asize);
 
-              ENSURES ( (size_t)(bp)%8 == 0);
-              size_t diff = size - asize;
-              return first_best_fit((void*)bp,asize, diff) ;
-            }
-    }
+    for (int i = offset; i < 9; i++)
+      {
+        for (bp =(void*)( *(long*)(GET_BUCKET(root, i)));
+             bp != NULL ; bp = get_succ((void*)bp) )
+          {
+            //printf("in first fit search np = %p \n",(void*)bp);
+            REQUIRES ((void*)bp != NULL);
+            REQUIRES (((size_t)(bp))%8 == 0);
+            size_t size =  GET_SIZE(HDRP((void*)(bp)));
+            if (!GET_ALLOC( HDRP( (void*)(bp) ) ) &&
+                (asize <= size))
+              {
+                ENSURES ( (size_t)(bp)%8 == 0);
+                size_t diff = size - asize;
+                return first_best_fit((void*)bp,asize, diff) ;
+              }
+          }
+      }
     return NULL; /* No fit */
 
 }
@@ -546,35 +569,55 @@ int mm_checkheap(int verbose) {
 
 /*** explicit list manipulation functions ***/
 
-
-static void add_block(void *bp)
+static int get_offset(size_t size)
 {
-  //printf ("adding block\n");
+  if (size > 0 && size <= 32)
+    return 0;
+  else if (size > 32 && size <= 128)
+    return 1;
+  else if (size >128 && size <= 512)
+    return 2;
+  else if (size > 512 && size <= 1024)
+    return 3;
+  else if (size > 1024 && size <=2048)
+    return 4;
+  else if (size >2048 && size <= 4096)
+    return 5;
+  else if (size > 4096 && size <= 8192)
+    return 6;
+  else if (size > 8192 && size <= 16384)
+    return 7 ;
+  else if (size > 16384)
+    return  8;
+  else
+    return -1;
+}
+
+static void add_block(void *bp, size_t size)
+{
+
   REQUIRES ( bp != NULL ) ;
   REQUIRES ((size_t)(bp) % 8 == 0);
-
-
-  //printf ("adding to the beginning of the list \n");
-  //printf ("root %p \n",root);
-  //printf ("root val %d ",*(int*)
-
-  if ( (*(long*)root != 0))
-       SET_PRED(*(long*)root) = (long)(bp);
-  SET_SUCC(bp) = *(long*)root;
+  int offset = get_offset(size);
+  //printf ("Adding to bucet %d \n", offset);
+    if ( (*(long*)GET_BUCKET(root, offset) != 0))
+       SET_PRED(*(long*)GET_BUCKET(root, offset)) = (long)(bp);
+  SET_SUCC(bp) = *(long*)GET_BUCKET(root, offset);
   SET_PRED(bp) = 0;
-  SET_SUCC(root) = (long)(bp);
+  SET_SUCC(GET_BUCKET(root, offset)) = (long)(bp);
   //print_list();
 
   //printf("returned from adding block\n");
   return;
 }
 
-static void remove_block(void *bp)
+static void remove_block(void *bp, size_t size)
 {
   //printf ("remove block\n");
   REQUIRES ( bp != NULL );
   REQUIRES ( (size_t)(bp) % 8 == 0);
 
+  int offset = get_offset(size);
   void *pred = get_pred(bp);
   void *succ = get_succ(bp);
 
@@ -583,7 +626,7 @@ static void remove_block(void *bp)
     {
       SET_SUCC(bp) = 0;
       SET_PRED(succ) = 0;
-      SET_SUCC(root) = (long)(succ);
+      SET_SUCC(GET_BUCKET(root, offset)) = (long)(succ);
 
     }
   else if (pred != NULL && succ == NULL)
@@ -607,7 +650,7 @@ static void remove_block(void *bp)
   else if ( pred == NULL && succ == NULL)
     {
       //printf("resetting root\n");
-      SET_SUCC(root) = 0;
+      SET_SUCC(GET_BUCKET(root, offset)) = 0;
     }
   //print_list();
   return;
