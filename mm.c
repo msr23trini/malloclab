@@ -201,11 +201,11 @@ static void *coalesce(void *bp)
     size_t size = GET_SIZE(HDRP(bp));
     //printf("coalescing");
     //Case 1 - both allocated
-    if (size < 16)
+    /*if (size < 16)
       {
         add_block(bp,size);
         return bp;
-      }
+        }*/
     if (prev_alloc && next_alloc) {
       //printf ("case 1 \n ") ;
       add_block(bp, size);
@@ -266,7 +266,7 @@ static void *coalesce(void *bp)
 
 void free (void *ptr) {
   //printf("in free\n");
-  REQUIRES (ptr!=NULL);
+  // REQUIRES (ptr!=NULL);
   REQUIRES ((size_t)(ptr)%8 == 0);
 
 /* $end mmfree */
@@ -290,7 +290,7 @@ void free (void *ptr) {
 
 void *realloc(void *oldptr, size_t size) {
 
-  REQUIRES (oldptr!=NULL);
+  //REQUIRES (oldptr!=NULL);
   REQUIRES ((size_t)(oldptr)%8 == 0);
 
   //printf ("realloc %d\n",(int)size);
@@ -460,35 +460,28 @@ static void *find_fit(size_t asize)
 {
    /* First fit search */
   void* bp;
+  print_list();
+  int offset = get_offset(asize);
 
-  //printf("in find fit\n");
-    // printf ("root = %p\n",(void*)(root));
-    //printf ("last byte = %p \n", mem_heap_hi());
-    //printf ("root successor %p\n", (void*)(*root));
-    //printf ("next %p", get_succ(root));
-    print_list();
-    int offset = get_offset(asize);
-
-    for (int i = offset; i < 9; i++)
-      {
-        for (bp =(void*)( *(long*)(GET_BUCKET(root, i)));
-             bp != NULL ; bp = get_succ((void*)bp) )
-          {
-            //printf("in first fit search np = %p \n",(void*)bp);
-            REQUIRES ((void*)bp != NULL);
-            REQUIRES (((size_t)(bp))%8 == 0);
-            size_t size =  GET_SIZE(HDRP((void*)(bp)));
-            if (!GET_ALLOC( HDRP( (void*)(bp) ) ) &&
-                (asize <= size))
-              {
-                ENSURES ( (size_t)(bp)%8 == 0);
-                size_t diff = size - asize;
-                return first_best_fit((void*)bp,asize, diff) ;
-              }
-          }
-      }
-    return NULL; /* No fit */
-
+  for (int i = offset; i < 9; i++)
+    {
+      for (bp =(void*)( *(long*)(GET_BUCKET(root, i)));
+           bp != NULL ; bp = get_succ((void*)bp) )
+        {
+          //printf("in first fit search np = %p \n",(void*)bp);
+          REQUIRES ((void*)bp != NULL);
+          REQUIRES (((size_t)(bp))%8 == 0);
+          size_t size =  GET_SIZE(HDRP((void*)(bp)));
+          if (!GET_ALLOC( HDRP( (void*)(bp) ) ) &&
+              (asize <= size))
+            {
+              ENSURES ( (size_t)(bp)%8 == 0);
+              size_t diff = size - asize;
+              return first_best_fit((void*)bp,asize, diff) ;
+            }
+        }
+    }
+  return NULL; /* No fit */
 }
 
 static void printblock(void *bp)
@@ -508,8 +501,8 @@ static void printblock(void *bp)
           (int)fsize, (falloc ? 'a' : 'f'));*/
 
   if (hsize == 0) {
-    // printf("%p: EOL\n", bp);
-        return;
+    printf("%p: EOL\n", bp);
+    return;
   }
 
 }
@@ -524,41 +517,84 @@ static void checkblock(void *bp)
       printf("Error: header does not match footer\n");
 }
 
+void check_address (void *bp)
+{
+  if (!(bp >= mem_heap_lo() && bp <= mem_heap_hi()))
+    printf ("Address out of bounds!");
+  return;
+}
+
+void check_succ_pred(void *bp)
+{
+  void *succ = get_succ(bp);
+  void *pred = get_pred(succ);
+  if (bp != pred)
+    printf("Successor does not point to Predecessor! \n");
+}
+
+void check_in_correct_bucket(void *bp, int bucket)
+{
+  int offset = get_offset( GET_SIZE(HDRP(bp)));
+  if (offset != bucket)
+    printf("Block is in the wrong bucket! \n");
+}
+
+void check_coalescing (void *bp)
+{
+  if ( !GET_ALLOC(HDRP(bp)) && !GET_ALLOC(HDRP(NEXT_BLKP(bp))))
+    printf ("Blocks not coalesced properly");
+}
+
 // Returns 0 if no errors were found, otherwise returns the error
 int mm_checkheap(int verbose) {
   // char *bp = heap_listp;
 
   if (verbose)
-    //printf("Heap (%p):\n", heap_listp);
+    printf("Heap (%p):\n", heap_listp);
 
   if ((GET_SIZE(HDRP(heap_listp)) != DSIZE) || !GET_ALLOC(HDRP(heap_listp)))
     printf("Bad prologue header\n");
   checkblock(heap_listp);
 
-  long *list;
-  for (list = root; list != NULL;
-       list =  get_succ(list)  ) {
-    //printf("here\n");
-    if (verbose)
-      //printblock(list);
-    checkblock(list);
-  }
+  void* list;
+  int count_free_in_list = 0;
+  int count_free_in_heap = 0;
+  for (int i =0; i < 9; i++)
+    {
+      for (list = (void*)(*(long*)GET_BUCKET(root,i)); list != NULL;
+           list =  get_succ(list)  ) {
+        if (verbose)
+          printblock(list);
+        checkblock(list);
+        if ( get_succ(list) != NULL && get_pred(list) !=NULL)
+          check_succ_pred(list);
+        check_address(list);
+        count_free_in_list++;
+        check_in_correct_bucket(list, i);
+      }
+    }
 
   char *bp;
 
   for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
     if (verbose)
       {
+        if (GET_ALLOC(HDRP(bp)) == 0)
+          count_free_in_heap ++;
         printblock(bp);
         checkblock(bp);
+        check_coalescing( (void*)bp);
       }
   }
+
+  if (count_free_in_heap != count_free_in_list)
+    printf ("Number of free block not consistent in heap and list list \n");
 
   if (verbose)
     printblock(bp);
     if ((GET_SIZE(HDRP(bp)) != 0) || !(GET_ALLOC(HDRP(bp))))
       {
-        //printf("Bad epilogue header\n");
+        printf("Bad epilogue header\n");
         if (GET_SIZE(HDRP(bp)) != 0)
           printf ("size is not 0\n");
         if (!(GET_ALLOC(HDRP(bp))) )
